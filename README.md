@@ -101,6 +101,9 @@ python ollama-cloud-watch.py --report --open
 
 # Raw JSON output (pipe into jq, other tools)
 python ollama-cloud-watch.py --json
+
+# Always-on-top desktop widget with live session/weekly usage (needs tkinter)
+python ollama-cloud-watch.py --overlay
 ```
 
 ## Dashboard (3 ways)
@@ -161,6 +164,17 @@ curl http://localhost:8643/api/lifetime | jq '.est_avg_cost_per_req'
 ```
 
 All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`), so you can fetch from any frontend.
+
+## Overlay (always-on-top widget)
+
+A small borderless widget that sits above your Windows taskbar and shows live session/weekly usage, color-coded by threshold (reuses `--warn`/`--crit`).
+
+```bash
+python ollama-cloud-watch.py --overlay              # dock above the taskbar (bottom-right)
+python ollama-cloud-watch.py --overlay --interval 300   # refresh every 5 min
+```
+
+Drag to move, right-click for **Refresh now** / **Quit**. Uses stdlib `tkinter` only, so no dependencies — but a Microsoft Store Python may not include tkinter; use a python.org build. The widget refreshes every **2 minutes by default** (override with `--interval`, minimum 30s).
 
 ## Cookie
 

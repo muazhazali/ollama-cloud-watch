@@ -43,7 +43,7 @@ HISTORY
 
 OPTIONS
   --watch         Poll every N seconds (default 1800 = 30min), record history + alerts
-  --interval N    Poll interval in seconds (use with --watch)
+  --interval N    Poll interval in seconds (default: 1800 watch, 120 overlay)
   --history       Record one snapshot and exit
   --alert         Print alert line if threshold crossed, else silent
   --warn PCT      Warning threshold (default 75)
@@ -57,6 +57,7 @@ OPTIONS
   --port PORT     HTTP server port (default 8642 for --serve, 8643 for --api)
   --cookie PATH   Custom cookie file path
   --env PATH      .env file to load (default: <script dir>/.env)
+  --overlay       Always-on-top desktop widget with live usage (needs tkinter)
   --json          Output raw JSON instead of formatted text
 
 UPDATE
@@ -83,6 +84,7 @@ from pathlib import Path
 SETTINGS_URL = "https://ollama.com/settings"
 TIMEOUT = 15
 DEFAULT_INTERVAL = 1800  # 30 minutes
+DEFAULT_OVERLAY_INTERVAL = 120  # 2 minutes
 WARN_PCT = 75.0
 CRIT_PCT = 90.0
 
@@ -2587,6 +2589,114 @@ class _APIHandler:
         return 404, "application/json", json.dumps({"error": "not found"})
 
 
+# ── overlay (always-on-top usage widget, stdlib tkinter) ────────────────────
+
+def _work_area() -> tuple[int, int, int, int] | None:
+    """Usable desktop rect (excludes the taskbar) on Windows, else None."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(
+            0x0030, 0, ctypes.byref(rect), 0  # SPI_GETWORKAREA
+        ):
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    return None
+
+
+def _run_overlay(cookie_path: Path, interval: int, warn: float, crit: float) -> int:
+    """Always-on-top mini window with live session/weekly usage (no deps)."""
+    try:
+        import tkinter as tk
+    except ImportError:
+        print("❌ tkinter is not available in this Python build — use a python.org build.", file=sys.stderr)
+        return 1
+
+    BG, FG, DIM = "#1e1e1e", "#e6e6e6", "#8a8a8a"
+    root = tk.Tk()
+    root.title("Ollama Cloud")
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.attributes("-alpha", 0.9)
+    root.configure(bg=BG)
+
+    label = tk.Label(root, text="Ollama · loading…", bg=BG, fg=FG,
+                     font=("Segoe UI", 10), padx=12, pady=6, justify="left")
+    label.pack()
+    hint = tk.Label(root, text="drag to move · right-click menu", bg=BG, fg=DIM,
+                    font=("Segoe UI", 7))
+    hint.pack(pady=(0, 4))
+
+    def place_bottom_right() -> None:
+        root.update_idletasks()
+        w, h = root.winfo_width(), root.winfo_height()
+        area = _work_area()
+        if area:
+            _, _, right, bottom = area
+            x, y = right - w - 8, bottom - h - 8
+        else:
+            x = root.winfo_screenwidth() - w - 8
+            y = root.winfo_screenheight() - h - 60
+        root.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    def color_for(pct: float | None) -> str:
+        if pct is None:
+            return DIM
+        if pct >= crit:
+            return "#ff5f56"
+        if pct >= warn:
+            return "#f5c542"
+        return "#4caf50"
+
+    def fmt(pct: float | None) -> str:
+        return f"{pct:5.1f}%" if isinstance(pct, (int, float)) else "  n/a"
+
+    def refresh() -> None:
+        try:
+            data = _fetch_usage(cookie_path)
+            s, w = data.get("session_used_pct"), data.get("weekly_used_pct")
+            label.config(
+                text=f"Ollama  {_configured_plan()}\n"
+                     f"Session {fmt(s)}\nWeekly  {fmt(w)}\n"
+                     f"updated {datetime.now().strftime('%H:%M')}",
+                fg=color_for(max((v for v in (s, w) if v is not None), default=None)),
+            )
+        except Exception as e:
+            label.config(text=f"Ollama · error\n{e}", fg="#ff5f56")
+
+    def schedule() -> None:
+        refresh()
+        root.after(max(interval, 30) * 1000, schedule)
+
+    drag = {"x": 0, "y": 0}
+
+    def start_drag(e):
+        drag["x"], drag["y"] = e.x, e.y
+
+    def do_drag(e):
+        root.geometry(f"+{root.winfo_x() + e.x - drag['x']}+{root.winfo_y() + e.y - drag['y']}")
+
+    menu = tk.Menu(root, tearoff=0)
+    menu.add_command(label="Refresh now", command=refresh)
+    menu.add_separator()
+    menu.add_command(label="Quit", command=root.destroy)
+
+    for wdg in (root, label, hint):
+        wdg.bind("<Button-1>", start_drag)
+        wdg.bind("<B1-Motion>", do_drag)
+        wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+
+    place_bottom_right()
+    schedule()
+    root.mainloop()
+    return 0
+
+
 def _run_server(cookie_path: Path, mode: str, port: int, host: str = "127.0.0.1") -> int:
     """Start a stdlib HTTP server (no dependencies)."""
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -2653,7 +2763,7 @@ def main() -> int:
         epilog=__doc__,
     )
     parser.add_argument("--watch", action="store_true", help="Poll continuously")
-    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help="Poll interval (seconds)")
+    parser.add_argument("--interval", type=int, default=None, help="Poll interval (seconds)")
     parser.add_argument("--history", action="store_true", help="Record snapshot and exit")
     parser.add_argument("--alert", action="store_true", help="Print alert if threshold crossed, else silent")
     parser.add_argument("--warn", type=float, default=WARN_PCT, help="Warning threshold %%")
@@ -2667,11 +2777,17 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=0, help="HTTP server port (default: 8642 serve, 8643 api)")
     parser.add_argument("--cookie", type=Path, default=DEFAULT_COOKIE_FILE, help="Cookie file path")
     parser.add_argument("--env", type=Path, default=DEFAULT_ENV_FILE, help=".env file to load")
+    parser.add_argument("--overlay", action="store_true", help="Always-on-top desktop usage widget")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
     args = parser.parse_args()
 
     # Load .env before any config is read (real env vars take precedence)
     _load_dotenv(args.env)
+
+    # --interval default: 2 min for the overlay, 30 min otherwise
+    interval = args.interval if args.interval is not None else (
+        DEFAULT_OVERLAY_INTERVAL if args.overlay else DEFAULT_INTERVAL
+    )
 
     # --report: generate and optionally open, then exit
     if args.report:
@@ -2714,7 +2830,7 @@ def main() -> int:
 
     # --watch: poll loop
     if args.watch:
-        print(f"Watching Ollama Cloud usage every {args.interval}s… (Ctrl+C to stop)")
+        print(f"Watching Ollama Cloud usage every {interval}s… (Ctrl+C to stop)")
         while True:
             try:
                 data = _fetch_usage(args.cookie)
@@ -2727,7 +2843,11 @@ def main() -> int:
                 print(f"[{ts}] S{s:.1f}% W{w:.1f}%{' · ' + alert if alert else ''}")
             except Exception as e:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {e}", file=sys.stderr)
-            time.sleep(args.interval)
+            time.sleep(interval)
+
+    # --overlay: always-on-top desktop widget
+    if args.overlay:
+        return _run_overlay(args.cookie, interval, args.warn, args.crit)
 
     # --html: generate standalone HTML file
     if args.html:
