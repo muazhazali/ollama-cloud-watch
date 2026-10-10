@@ -34,6 +34,9 @@ chmod +x ollama-cloud-watch.py
 echo '__Secure-session=<value>' > ~/.ollama-cloud-cookie.txt
 chmod 600 ~/.ollama-cloud-cookie.txt
 
+# Or put the same values in a .env file next to the script (optional)
+cp .env.example .env
+
 # Optional fallback: export the API key or use ~/.ollama-cloud-api-key.txt
 export OLLAMA_API_KEY='...'
 
@@ -174,11 +177,23 @@ echo '__Secure-session=<value>' > ~/.ollama-cloud-cookie.txt
 chmod 600 ~/.ollama-cloud-cookie.txt
 ```
 
+An `OLLAMA_COOKIE` value (env var or `.env`, see below) takes priority over both.
+
 Get the cookie from your browser: open [ollama.com/settings](https://ollama.com/settings) (logged in) → DevTools → Application/Storage → Cookies → `https://ollama.com` → copy `__Secure-session`.
 
 Set `OLLAMA_COOKIE_SOURCE=auto|keychain|file` (default: `auto` — Keychain if present, otherwise file).
 
 Use `--cookie /custom/path.txt` for a custom cookie file location.
+
+### Optional: `.env`
+
+Instead of the above, a `.env` file next to the script (override with `--env PATH`) can hold the config. Parsed with stdlib only, and real environment variables win. Copy [`.env.example`](.env.example) to start:
+
+```bash
+OLLAMA_COOKIE=__Secure-session=<value>   # takes priority over Keychain/file
+OLLAMA_API_KEY=<key>                     # optional API fallback
+OLLAMA_PLAN=pro                          # free | pro | max
+```
 
 ## API fallback
 

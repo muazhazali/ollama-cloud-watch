@@ -29,6 +29,8 @@ COOKIE
   The script reads your Ollama Cloud session cookie from either:
     1. macOS Keychain:  security add-generic-password -s ollama-cloud-watch -a ollama -w '<cookie>' -U
     2. Or a plain file:  echo '__Secure-session=<value>' > ~/.ollama-cloud-cookie.txt
+  A .env file (see --env) can also set OLLAMA_COOKIE, OLLAMA_API_KEY and
+  OLLAMA_PLAN instead; it is loaded first and real env vars win.
   Set OLLAMA_COOKIE_SOURCE=auto|keychain|file (default: auto).
 
   Get the cookie from your browser: ollama.com/settings (logged in) →
@@ -54,6 +56,7 @@ OPTIONS
   --host HOST     HTTP bind host (default 127.0.0.1; use ::1 for IPv6 loopback)
   --port PORT     HTTP server port (default 8642 for --serve, 8643 for --api)
   --cookie PATH   Custom cookie file path
+  --env PATH      .env file to load (default: <script dir>/.env)
   --json          Output raw JSON instead of formatted text
 
 UPDATE
@@ -105,6 +108,29 @@ REPO_DIR = Path(__file__).resolve().parent
 GITHUB_REPO = "Kosello/ollama-cloud-watch"
 UPDATE_CHECK_TTL = 3600  # re-check GitHub at most once per hour
 _update_state: dict = {"ts": 0.0, "result": None}
+
+# ── .env (optional config layer, on top of env vars + cookie file) ────────
+DEFAULT_ENV_FILE = REPO_DIR / ".env"
+
+
+def _load_dotenv(env_path: Path) -> None:
+    """Load KEY=VALUE pairs from a .env file; existing env vars win.
+
+    Handles # comments, blank lines and optional quotes. A missing file is a
+    no-op, so plain env vars and the cookie file keep working.
+    """
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.removeprefix("export ").strip()
+        if key:
+            os.environ.setdefault(key, value.strip().strip("'\""))
 
 
 def _git(cmd: list[str], timeout: int = 15) -> str:
@@ -195,6 +221,9 @@ def _keychain_cookie() -> str | None:
 
 
 def _load_cookie(cookie_path: Path) -> str:
+    env_cookie = os.environ.get("OLLAMA_COOKIE", "").strip()
+    if env_cookie:
+        return env_cookie
     source = _cookie_source()
     if source in ("auto", "keychain"):
         kc = _keychain_cookie()
@@ -2637,8 +2666,12 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=0, help="HTTP server port (default: 8642 serve, 8643 api)")
     parser.add_argument("--cookie", type=Path, default=DEFAULT_COOKIE_FILE, help="Cookie file path")
+    parser.add_argument("--env", type=Path, default=DEFAULT_ENV_FILE, help=".env file to load")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
     args = parser.parse_args()
+
+    # Load .env before any config is read (real env vars take precedence)
+    _load_dotenv(args.env)
 
     # --report: generate and optionally open, then exit
     if args.report:
