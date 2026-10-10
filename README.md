@@ -167,7 +167,7 @@ All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`), 
 
 ## Overlay (always-on-top widget)
 
-A small borderless widget that sits above your Windows taskbar and shows live session/weekly usage, color-coded by threshold (reuses `--warn`/`--crit`).
+A small borderless widget that sits above your Windows taskbar and shows live session/weekly usage as color-coded progress bars (reuses `--warn`/`--crit`).
 
 ```bash
 python ollama-cloud-watch.py --overlay              # dock above the taskbar (bottom-right)

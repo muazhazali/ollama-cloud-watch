@@ -2617,20 +2617,40 @@ def _run_overlay(cookie_path: Path, interval: int, warn: float, crit: float) -> 
         print("❌ tkinter is not available in this Python build — use a python.org build.", file=sys.stderr)
         return 1
 
-    BG, FG, DIM = "#1e1e1e", "#e6e6e6", "#8a8a8a"
+    BG, FG, DIM, TRACK = "#1e1e1e", "#e6e6e6", "#8a8a8a", "#333333"
+    BAR_W, BAR_H = 96, 8
+
     root = tk.Tk()
     root.title("Ollama Cloud")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.9)
+    root.attributes("-alpha", 0.92)
     root.configure(bg=BG)
 
-    label = tk.Label(root, text="Ollama · loading…", bg=BG, fg=FG,
-                     font=("Segoe UI", 10), padx=12, pady=6, justify="left")
-    label.pack()
-    hint = tk.Label(root, text="drag to move · right-click menu", bg=BG, fg=DIM,
-                    font=("Segoe UI", 7))
-    hint.pack(pady=(0, 4))
+    frame = tk.Frame(root, bg=BG, highlightthickness=1, highlightbackground="#3a3a3a")
+    frame.pack()
+
+    title = tk.Label(frame, text="Ollama", bg=BG, fg=FG,
+                     font=("Segoe UI Semibold", 9), anchor="w")
+    title.grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(8, 2))
+
+    def make_row(r: int, name: str):
+        tk.Label(frame, text=name, bg=BG, fg=DIM, font=("Segoe UI", 8),
+                 anchor="w", width=7).grid(row=r, column=0, sticky="w", padx=(10, 4))
+        canvas = tk.Canvas(frame, width=BAR_W, height=BAR_H, bg=BG,
+                           highlightthickness=0, bd=0)
+        canvas.grid(row=r, column=1, padx=0)
+        pct = tk.Label(frame, text="n/a", bg=BG, fg=FG, font=("Segoe UI", 8),
+                       width=5, anchor="e")
+        pct.grid(row=r, column=2, sticky="e", padx=(6, 10))
+        return canvas, pct
+
+    s_canvas, s_pct = make_row(1, "Session")
+    w_canvas, w_pct = make_row(2, "Weekly")
+
+    footer = tk.Label(frame, text="updated —", bg=BG, fg=DIM,
+                      font=("Segoe UI", 7), anchor="w")
+    footer.grid(row=3, column=0, columnspan=3, sticky="w", padx=10, pady=(3, 8))
 
     def place_bottom_right() -> None:
         root.update_idletasks()
@@ -2654,20 +2674,27 @@ def _run_overlay(cookie_path: Path, interval: int, warn: float, crit: float) -> 
         return "#4caf50"
 
     def fmt(pct: float | None) -> str:
-        return f"{pct:5.1f}%" if isinstance(pct, (int, float)) else "  n/a"
+        return f"{pct:.1f}%" if isinstance(pct, (int, float)) else "n/a"
+
+    def draw_bar(canvas: "tk.Canvas", pct: float | None) -> None:
+        canvas.delete("all")
+        canvas.create_rectangle(0, 0, BAR_W, BAR_H, fill=TRACK, outline="")
+        if isinstance(pct, (int, float)) and pct > 0:
+            fill_w = min(pct, 100.0) / 100.0 * BAR_W
+            canvas.create_rectangle(0, 0, fill_w, BAR_H, fill=color_for(pct), outline="")
 
     def refresh() -> None:
         try:
             data = _fetch_usage(cookie_path)
             s, w = data.get("session_used_pct"), data.get("weekly_used_pct")
-            label.config(
-                text=f"Ollama  {_configured_plan()}\n"
-                     f"Session {fmt(s)}\nWeekly  {fmt(w)}\n"
-                     f"updated {datetime.now().strftime('%H:%M')}",
-                fg=color_for(max((v for v in (s, w) if v is not None), default=None)),
-            )
+            title.config(text=f"Ollama · {_configured_plan()}")
+            draw_bar(s_canvas, s)
+            draw_bar(w_canvas, w)
+            s_pct.config(text=fmt(s), fg=color_for(s))
+            w_pct.config(text=fmt(w), fg=color_for(w))
+            footer.config(text=f"updated {datetime.now().strftime('%H:%M')}", fg=DIM)
         except Exception as e:
-            label.config(text=f"Ollama · error\n{e}", fg="#ff5f56")
+            footer.config(text=f"error: {e}", fg="#ff5f56")
 
     def schedule() -> None:
         refresh()
@@ -2686,7 +2713,7 @@ def _run_overlay(cookie_path: Path, interval: int, warn: float, crit: float) -> 
     menu.add_separator()
     menu.add_command(label="Quit", command=root.destroy)
 
-    for wdg in (root, label, hint):
+    for wdg in (root, frame, title, footer, s_canvas, w_canvas, s_pct, w_pct):
         wdg.bind("<Button-1>", start_drag)
         wdg.bind("<B1-Motion>", do_drag)
         wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
